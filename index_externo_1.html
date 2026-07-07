@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control de Entradas y Salidas</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #f7f3f9;
+    margin: 0;
+    padding: 24px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    box-sizing: border-box;
+  }
+  h1 { font-size: 20px; color: #2E2E38; text-align: center; margin-bottom: 4px; }
+  p.sub { color: #777; font-size: 13px; margin-top: 0; margin-bottom: 24px; text-align: center; }
+  #reloj { font-size: 32px; font-weight: bold; color: #8a3ab9; margin-bottom: 24px; }
+
+  .btn-nombre {
+    width: 100%; max-width: 320px; padding: 16px; margin: 8px 0;
+    border: none; border-radius: 12px; cursor: pointer;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.15); text-align: left; color: white;
+  }
+  .btn-nombre .nombre { display: block; font-size: 18px; font-weight: bold; }
+  .btn-nombre .accion { display: block; font-size: 13px; opacity: 0.9; margin-top: 2px; }
+  .estado-entrada { background: linear-gradient(135deg, #4bc48a, #1a9e63); }
+  .estado-salida { background: linear-gradient(135deg, #f2a43a, #e0752b); }
+  .estado-completo { background: linear-gradient(135deg, #9a9a9a, #6b6b6b); cursor: not-allowed; }
+  .btn-nombre:active { transform: scale(0.97); }
+  .btn-nombre:disabled { opacity: 0.6; }
+
+  #mensaje {
+    margin-top: 24px; padding: 14px 18px; border-radius: 10px; max-width: 320px;
+    text-align: center; font-size: 15px; display: none;
+  }
+  .exito { background: #d9f3e3; color: #1a7a45; display: block !important; }
+  .error { background: #fde2e2; color: #b02a2a; display: block !important; }
+  .cargando { background: #eee; color: #555; display: block !important; }
+
+  #overlay {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.6); align-items: center; justify-content: center; z-index: 10;
+  }
+  #modal {
+    background: white; border-radius: 14px; padding: 20px; width: 90%; max-width: 380px;
+    text-align: center;
+  }
+  #modal h2 { font-size: 16px; margin: 0 0 12px; color: #2E2E38; }
+  #video { width: 100%; border-radius: 10px; background: #000; }
+  #canvas { display: none; }
+  .modal-botones { margin-top: 14px; display: flex; gap: 10px; justify-content: center; }
+  .modal-btn { flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 14px; cursor: pointer; }
+  .modal-btn.capturar { background: #7b2ff7; color: white; }
+  .modal-btn.cancelar { background: #eee; color: #444; }
+  #camaraError { color: #b02a2a; font-size: 13px; margin-top: 10px; display: none; }
+</style>
+</head>
+<body>
+  <h1>Control de Entradas y Salidas</h1>
+  <p class="sub">Da clic en tu nombre. El botón te dice si vas a marcar entrada o salida.</p>
+  <div id="reloj">--:--:--</div>
+
+  <div id="botones"><p class="sub">Cargando colaboradoras...</p></div>
+  <div id="mensaje"></div>
+
+  <div id="overlay">
+    <div id="modal">
+      <h2 id="modalTitulo">Tómate una foto para marcar</h2>
+      <video id="video" autoplay playsinline></video>
+      <canvas id="canvas"></canvas>
+      <div id="camaraError">No se pudo acceder a la cámara. Puedes continuar sin foto.</div>
+      <div class="modal-botones">
+        <button class="modal-btn cancelar" onclick="cerrarModal()">Cancelar</button>
+        <button class="modal-btn capturar" id="btnCapturar" onclick="capturarYEnviar()">Tomar foto y marcar</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // =====================================================================
+  // IMPORTANTE: Pega aquí la URL de tu Apps Script (termina en /exec)
+  // =====================================================================
+  const URL_APPS_SCRIPT = "PEGA_AQUI_TU_URL_DE_APPS_SCRIPT";
+  // =====================================================================
+
+  function actualizarReloj() {
+    document.getElementById("reloj").textContent = new Date().toLocaleTimeString();
+  }
+  setInterval(actualizarReloj, 1000);
+  actualizarReloj();
+
+  const ETIQUETAS = {
+    entrada: { texto: "Marcar ENTRADA", clase: "estado-entrada" },
+    salida: { texto: "Marcar SALIDA", clase: "estado-salida" },
+    completo: { texto: "Ya completaste tu jornada de hoy", clase: "estado-completo" }
+  };
+
+  let nombreActual = null;
+  let streamActual = null;
+
+  function crearBoton(nombre, estado) {
+    const info = ETIQUETAS[estado] || ETIQUETAS.entrada;
+    const btn = document.createElement("button");
+    btn.className = "btn-nombre " + info.clase;
+    btn.innerHTML = '<span class="nombre">' + nombre + '</span><span class="accion">' + info.texto + '</span>';
+    btn.disabled = (estado === "completo");
+    btn.onclick = function () { abrirModal(nombre); };
+    return btn;
+  }
+
+  function cargarBotones() {
+    fetch(URL_APPS_SCRIPT + "?action=estados")
+      .then(function (resp) { return resp.json(); })
+      .then(function (estados) {
+        const cont = document.getElementById("botones");
+        cont.innerHTML = "";
+        const nombres = Object.keys(estados);
+        if (nombres.length === 0) {
+          cont.innerHTML = '<p class="sub">No hay colaboradoras configuradas.</p>';
+          return;
+        }
+        nombres.forEach(function (nombre) {
+          cont.appendChild(crearBoton(nombre, estados[nombre]));
+        });
+      })
+      .catch(function () {
+        document.getElementById("botones").innerHTML =
+          '<p class="sub">No se pudo conectar con el sistema. Revisa la URL configurada.</p>';
+      });
+  }
+
+  function abrirModal(nombre) {
+    nombreActual = nombre;
+    document.getElementById("modalTitulo").textContent = nombre + ", tómate una foto para marcar";
+    document.getElementById("overlay").style.display = "flex";
+    document.getElementById("camaraError").style.display = "none";
+    document.getElementById("btnCapturar").style.display = "inline-block";
+    document.getElementById("video").style.display = "block";
+    document.getElementById("btnCapturar").textContent = "Tomar foto y marcar";
+
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(function (stream) {
+        streamActual = stream;
+        document.getElementById("video").srcObject = stream;
+      })
+      .catch(function () {
+        document.getElementById("camaraError").style.display = "block";
+        document.getElementById("video").style.display = "none";
+        document.getElementById("btnCapturar").textContent = "Marcar sin foto";
+      });
+  }
+
+  function cerrarModal() {
+    if (streamActual) {
+      streamActual.getTracks().forEach(t => t.stop());
+      streamActual = null;
+    }
+    document.getElementById("overlay").style.display = "none";
+  }
+
+  function capturarYEnviar() {
+    const video = document.getElementById("video");
+    let base64 = null;
+    let mime = null;
+
+    if (streamActual) {
+      const canvas = document.getElementById("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+      base64 = dataUrl.split(",")[1];
+      mime = "image/jpeg";
+    }
+
+    cerrarModal();
+    marcar(nombreActual, base64, mime);
+  }
+
+  function marcar(nombre, fotoBase64, mime) {
+    const msg = document.getElementById("mensaje");
+    msg.className = "cargando";
+    msg.textContent = "Registrando...";
+    document.querySelectorAll(".btn-nombre").forEach(b => b.disabled = true);
+
+    fetch(URL_APPS_SCRIPT, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ nombre: nombre, fotoBase64: fotoBase64, mimeType: mime })
+    })
+      .then(function (resp) { return resp.json(); })
+      .then(function (resp) {
+        msg.className = resp.ok ? "exito" : "error";
+        msg.textContent = resp.mensaje;
+        cargarBotones();
+      })
+      .catch(function (err) {
+        document.querySelectorAll(".btn-nombre").forEach(b => b.disabled = false);
+        msg.className = "error";
+        msg.textContent = "Ocurrió un error de conexión: " + err.message;
+      });
+  }
+
+  cargarBotones();
+</script>
+</body>
+</html>
