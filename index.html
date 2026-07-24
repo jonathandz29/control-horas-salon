@@ -112,7 +112,7 @@ const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbxnlbaZESHqwd1V
   }
 
   function cargarBotones() {
-    fetch(URL_APPS_SCRIPT + "?action=estados")
+   fetch(URL_APPS_SCRIPT + "?action=estados&_=" + Date.now(), { cache: "no-store" })
       .then(function (resp) { return resp.json(); })
       .then(function (estados) {
         const cont = document.getElementById("botones");
